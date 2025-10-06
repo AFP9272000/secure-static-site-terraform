@@ -1,0 +1,12 @@
+# Example variables file for the secure static site
+
+region          = "us-east-1"
+bucket_name     = "my-secure-site-bucket"
+log_bucket_name = "my-secure-site-log-bucket"
+index_file      = "index.html"
+rate_limit      = 2000
+
+project_tags = {
+  Project     = "secure-static-site"
+  Environment = "dev"
+}
