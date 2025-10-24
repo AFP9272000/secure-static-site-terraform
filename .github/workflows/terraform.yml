@@ -1,18 +1,23 @@
 name: Terraform CI
 
+# Trigger the workflow on pushes to `main` and on all pull requests
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
 
+# Global environment variables for Terraform and AWS region
 env:
   TF_VERSION: 1.5.0
+  # The working directory where your Terraform configuration files are located.
+  # For this repository, Terraform files live at the root.
   TF_WORKING_DIR: .
 
 jobs:
   terraform:
     runs-on: ubuntu-latest
-
+    # Checkout repository, set up Terraform, configure AWS credentials, then run
+    # Terraform commands.  Plan runs on pull requests; apply runs only on pushes to main.
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -29,23 +34,36 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Check Terraform formatting; fails if files need formatting
       - name: Terraform format
         run: terraform fmt -check -recursive
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      # Initialize Terraform (downloads providers and sets up backend)
       - name: Terraform init
-        run: terraform init -backend=false -input=false
+        run: terraform init -input=false
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      # Validate Terraform configuration
       - name: Terraform validate
         run: terraform validate -no-color
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      #Checkov, soft-fail
+      - name: Run Checkov Security Scan 
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+
+      # Create and show an execution plan for pull requests
       - name: Terraform plan
         if: github.event_name == 'pull_request'
-        run: terraform plan -no-color
+        run: terraform plan -no-color -input=false
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      # Apply changes on pushes to the main branch
       - name: Terraform apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve -input=false
