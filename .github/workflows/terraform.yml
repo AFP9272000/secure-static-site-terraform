@@ -62,9 +62,16 @@ jobs:
         if: github.event_name == 'pull_request'
         run: terraform plan -no-color -input=false
         working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+        TF_VAR_bucket_name: ${{ secrets.BUCKET_NAME }}
+        TF_VAR_log_bucket_name: ${{ secrets.LOG_BUCKET_NAME }}
+
 
       # Apply changes on pushes to the main branch
       - name: Terraform apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve -input=false
         working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+        TF_VAR_bucket_name: ${{ secrets.BUCKET_NAME }}
+        TF_VAR_log_bucket_name: ${{ secrets.LOG_BUCKET_NAME }}
