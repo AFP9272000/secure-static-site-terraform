@@ -1,163 +1,130 @@
-Secure Static Site on AWS with Terraform
-Overview
+# Secure Static Site on AWS with Terraform
 
-This repository contains a complete Terraform configuration for hosting a static website securely on AWS. The design follows security best‑practices for a content delivery pipeline:
+A production-ready Terraform configuration to host a secure, private-origin static website on AWS using S3, CloudFront, and WAF. The design follows security best practices by keeping the S3 site bucket private, using CloudFront Origin Access Control (OAC) to retrieve content, and protecting the distribution with AWS WAF. Optional logging, versioning and server-side encryption are enabled for observability and durability.
 
-Amazon S3 acts as a private origin for the website files. Objects are not publicly accessible; the bucket policy only allows the CloudFront distribution to read them.
+Key features
+- Private S3 origin (objects not publicly accessible)
+- CloudFront distribution with Origin Access Control (OAC) and HTTPS enforcement
+- AWS WAF v2 Web ACL with managed rule sets and configurable rate limiting
+- S3 server-side encryption (SSE-S3 / AES-256) and versioning
+- Optional GitHub Actions workflow for CI/CD (format, validate, plan, apply)
+- Modular Terraform code and example variables file
 
-Amazon CloudFront serves the site to users. The distribution uses an Origin Access Control (OAC) to sign requests to S3 and enforces HTTPS for viewers. Optional logging writes access logs to a separate encrypted bucket.
-
-AWS Web Application Firewall (WAF v2) protects the site from common web attacks. Managed rule sets cover common vulnerabilities (e.g. SQL injection, known bad IPs) and a rate‑limit rule throttles abusive clients.
-
-Server‑side encryption (SSE‑S3) is enabled on both buckets. Although AWS Key Management Service (KMS) can encrypt objects, CloudFront cannot fetch anonymously encrypted objects. Amazon’s documentation notes that disabling ACLs or using SSE‑KMS on the log bucket prevents CloudFront from delivering logs
-stackoverflow.com
- and that SSE‑KMS does not support anonymous requests
-repost.aws
-. Therefore the site and log buckets use the simpler AES‑256 (SSE‑S3) encryption.
-
-Versioning and force‑destroy are enabled. Versioning protects against accidental overwrites. force_destroy on the log bucket ensures terraform destroy can clean up by automatically emptying the bucket.
-
-Modular code improves readability and reuse. Resources are split across logical files (provider.tf, kms.tf, s3.tf, cloudfront.tf, waf.tf, outputs.tf) and controlled via variables.
-
-An optional GitHub Actions workflow in .github/workflows/terraform.yml automatically formats, validates, plans and applies the Terraform on pushes to main.
-
-Architecture diagram (conceptual)
-┌─────────────┐   HTTPS    ┌──────────────┐
-│ End users   ├──────────▶│ CloudFront   │
-└─────────────┘           │ distribution │
-                          │ + WAF rules  │
-                          └──────┬───────┘
-                                 │
-                Signed requests  │ (Origin Access Control)
-                                 ▼
-                       ┌─────────────────┐
-                       │ S3 site bucket │  (private origin)
-                       └─────────────────┘
-                                ▲
-         Access logs (optional) │
-                                │
-                       ┌──────────────────┐
-                       │ S3 log bucket    │  (encrypted, versioned)
-                       └──────────────────┘
+Architecture (conceptual)
+```
+  ┌─────────────┐   HTTPS    ┌──────────────┐
+  │ End users   ├──────────▶│  CloudFront  │
+  └─────────────┘           │ distribution │
+                            │  + WAF rules │
+                            └──────┬───────┘
+                                   │
+               Signed requests      │ (Origin Access Control)
+                                   ▼
+                         ┌─────────────────┐
+                         │ S3 site bucket  │ (private origin)
+                         └─────────────────┘
+                                  ▲
+         Access logs (optional)   │
+                                  │
+                         ┌──────────────────┐
+                         │ S3 log bucket     │ (encrypted, versioned)
+                         └──────────────────┘
+```
 
 Repository structure
-File / folder	Purpose
-provider.tf	Defines the Terraform AWS provider and required versions.
-variables.tf	Declares variables such as AWS region, bucket names, rate limit and tagging.
-locals.tf	Consolidates common tags applied to all resources.
-kms.tf	(Optional) Contains KMS resources if you wish to use customer‑managed keys. Currently unused because CloudFront cannot serve SSE‑KMS encrypted objects
-repost.aws
-.
-s3.tf	Creates the site bucket and log bucket, enabling versioning, encryption (AES‑256), logging, bucket policies and force‑destroy.
-cloudfront.tf	Configures the CloudFront distribution, origin access control (OAC) and HTTPS viewer settings. Logging to the log bucket is enabled.
-waf.tf	Defines the WAF Web ACL with AWS‑managed rules and a configurable rate limit.
-outputs.tf	Exposes the CloudFront domain name and bucket ARN after deployment.
-.github/workflows/terraform.yml	GitHub Actions workflow to check formatting and deploy automatically.
-terraform.tfvars.example	Sample variable values for users to copy into their own terraform.tfvars.
-index.html	Example landing page to upload to the site bucket.
+- provider.tf — Terraform AWS provider configuration and required versions
+- variables.tf — Variable declarations (region, bucket names, rate limit, tags, etc.)
+- locals.tf — Shared locals (common tagging, naming helpers)
+- kms.tf — Optional KMS resources (unused by default due to CloudFront/SSE‑KMS limitations)
+- s3.tf — Site and log bucket definitions (versioning, encryption, policies)
+- cloudfront.tf — CloudFront distribution, origin access control, viewer settings
+- waf.tf — WAF Web ACL and rate limiting rules
+- outputs.tf — Useful outputs (CloudFront domain, bucket ARNs)
+- terraform.tfvars.example — Example variable values to copy into terraform.tfvars
+- .github/workflows/terraform.yml — Optional GitHub Actions workflow for CI/CD
+- index.html — Example landing page
+
 Prerequisites
+- AWS account with permissions to create S3, CloudFront, WAF, IAM/KMS (if used)
+- Terraform >= 1.3 installed locally
+- (If using GitHub Actions) repository secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+- (Optional) ACM certificate in us-east-1 for a custom domain on CloudFront
 
-AWS account with permissions to create S3 buckets, CloudFront distributions, WAFs and KMS keys.
+Quick start
 
-Terraform >= 1.3 installed locally. See Terraform installation instructions
-.
+1. Clone the repository
+   git clone https://github.com/AFP9272000/secure-static-site-terraform.git
+   cd secure-static-site-terraform
 
-GitHub repository configured with repository secrets
- if you use the provided workflow: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_REGION.
+2. Configure variables
+   Copy the example and edit values:
+   cp terraform.tfvars.example terraform.tfvars
 
-SSL certificate (optional): If you want to use a custom domain, provision an ACM certificate in the desired AWS region and update the CloudFront distribution accordingly.
+   Important variables to set:
+   - region — AWS region (e.g. "us-east-1")
+   - site_bucket_name — unique S3 bucket name for the website
+   - log_bucket_name — unique S3 bucket name for access logs
+   - rate_limit — allowed requests per 5 minutes per IP (WAF)
+   - common_tags — tags applied to most resources
 
-Usage
-1. Clone this repository
-git clone https://github.com/AFP9272000/secure-static-site-terraform.git
-cd secure-static-site-terraform
+   Do not commit terraform.tfvars to version control.
 
-2. Configure your variables
+3. Initialize and deploy
+   terraform init
+   terraform validate
+   terraform plan -out=tfplan
+   terraform apply tfplan
 
-Copy the example variables file and edit it with your desired values:
+What this creates
+- A private S3 bucket for website content (versioned, AES‑256 encrypted)
+- A log S3 bucket for CloudFront access logs (versioned, AES‑256 encrypted)
+- A CloudFront distribution with Origin Access Control (OAC)
+- A WAF Web ACL with AWS-managed rules and a configurable rate-limit rule
+- Optional GitHub Actions workflow (if enabled)
 
-cp terraform.tfvars.example terraform.tfvars
+Uploading your website
+Because the site bucket is private, upload objects using the AWS CLI (or SDK) with credentials that can write to the bucket used by Terraform:
 
-# open terraform.tfvars in your editor and set:
-# - region             (e.g. "us-east-2")
-# - site_bucket_name   (unique name for the website bucket)
-# - log_bucket_name    (unique name for the log bucket)
-# - rate_limit         (e.g. 2000 requests per 5 minutes)
-# - common_tags        (project tags like Project="StaticSite", Environment="dev")
-# - alert_email        (for CPU alarms if using EC2; optional)
+aws s3 sync ./site s3://"your-site-buckets"/
 
+If you make changes to objects, invalidate CloudFront or create an invalidation to refresh the cache.
 
-Do not commit terraform.tfvars to version control, as it may contain sensitive values.
+Custom domain
+To use a custom domain (e.g. www.example.com):
+- Provision an ACM certificate in us-east-1 (required for CloudFront)
+- Update cloudfront.tf with the ACM certificate ARN and aliases
+- Create a DNS record (Route 53 A/ALIAS or CNAME) pointing to the CloudFront domain
 
-3. Initialise and deploy
-
-Run the following commands in the root of the repository:
-
-terraform init          # install providers and modules
-terraform validate      # confirm the configuration is syntactically valid
-terraform plan -out=tfplan  # preview the changes
-terraform apply tfplan  # apply the infrastructure
-
-
-Terraform will create:
-
-A private S3 bucket for your static website, with versioning and AES‑256 encryption.
-
-A second S3 bucket for access logs, also versioned and encrypted.
-
-A CloudFront distribution with an Origin Access Control (OAC) that restricts origin access to CloudFront.
-
-A WAF Web ACL with AWS‑managed rule sets and a configurable rate‑limit.
-
-An optional GitHub Actions pipeline that runs the above commands automatically.
-
-After deployment, Terraform will output the CloudFront domain name (e.g. d123abcde.cloudfront.net). Upload your website files (e.g. index.html, CSS, images) to the site bucket under the ./terraform directory:
-
-aws s3 sync ./terraform s3://<your-site-bucket>/
-
-
-Note: because the bucket is private and encrypted, you must upload via the AWS CLI or SDK using the same credentials used for deployment.
-
-4. (Optional) Custom domain
-
-To use your own domain (e.g. www.example.com), you will need:
-
-A valid ACM certificate in us‑east‑1 if using a CloudFront distribution. Update the cloudfront.tf file with the certificate ARN and domain aliases.
-
-A DNS record (e.g. Route 53 A or CNAME) pointing to the CloudFront domain.
-
-5. Destroying the stack
-
-To tear down all resources, run:
-
+Destroying the stack
+To tear down resources:
 terraform destroy
 
+Note: force_destroy is enabled on the log bucket to allow terraform destroy to automatically empty it. Backup any site files you want to keep before destroying.
 
-Because force_destroy is set on the log bucket, Terraform will automatically empty and delete it. The site bucket is also deleted; be sure to back up any website files you wish to keep.
+Logging & monitoring
+- CloudFront access logs are written to the configured log bucket (AES‑256)
+- Both buckets have versioning enabled for recovery from accidental overwrites
+- Add CloudWatch alarms, SNS alerts, or other monitoring as needed for production
 
-Logging and monitoring
+Notes & limitations
+- Encryption: CloudFront cannot fetch objects encrypted with SSE-KMS in a straightforward anonymous way. For this reason the default uses SSE‑S3 (AES‑256). If your compliance requires KMS, consider using a custom origin that can decrypt or a different architecture.
+- WAF rate limiting: Rate limits are defined per 5 minute window. Tune the rate_limit variable according to expected traffic patterns.
+- Cost: Created resources incur AWS charges (S3 storage, CloudFront data transfer, WAF request fees, etc.). Monitor usage and tear down unused resources.
+- State management: For teams, use a remote backend (S3 + DynamoDB locking). The example uses local state for simplicity.
 
-By default, CloudFront access logs are stored in the log bucket with AES‑256 encryption. We enable ACLs on the log bucket and object ownership of ObjectWriter so CloudFront can write logs. AWS warns that disabling ACLs prevents CloudFront from writing logs
-stackoverflow.com
-. Versioning on both buckets allows recovery of overwritten objects. You can add additional monitoring by creating CloudWatch alarms or integrating with AWS Budgets.
-
-Notes and limitations
-
-Encryption: CloudFront cannot fetch objects encrypted with SSE‑KMS or bucket keys. As a result, this configuration uses SSE‑S3 (AES‑256) for both buckets
-repost.aws
-. If your compliance policies require KMS, you will need to use a different origin (e.g. an API Gateway or a custom origin) or implement a Lambda@Edge function to decrypt objects.
-
-Rate limiting: The WAF rate limit variable controls how many requests per five minutes are allowed from a single IP. Adjust this value based on expected traffic.
-
-Cost considerations: The resources created here incur AWS charges—S3 storage, CloudFront data transfer, and WAF request fees. Monitor your usage and tear down the stack when not needed.
-
-State management: For collaborative environments, configure a remote state backend (e.g. an S3 bucket with DynamoDB locking) in provider.tf. The sample uses local state for simplicity.
+Security considerations
+- Keep terraform.tfvars and AWS credentials out of version control
+- Use least privilege for the AWS principal used by CI/CD
+- Regularly review WAF rules and CloudFront logging for suspicious activity
+- Rotate keys and rotate IAM roles where possible
 
 Contributing
-
-Contributions and improvements are welcome! Feel free to open an issue or submit a pull request.
+Contributions welcome. Open an issue to discuss changes or submit a pull request.
 
 License
+This project is licensed under the MIT License — see the LICENSE file for details.
 
-This project is licensed under the MIT License. See the LICENSE
-file for details.
+Further reading and references
+- AWS CloudFront and S3 best practices
+- AWS WAF managed rule groups
+- Terraform docs: provider and state configurations
