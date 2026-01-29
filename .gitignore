@@ -1,6 +1,7 @@
 # Terraform state and transient files
 *.tfstate
 *.tfstate.*
+tfplan
 crash.log
 crash.*.log
 .terraform/

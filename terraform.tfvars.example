@@ -4,9 +4,19 @@ region          = "us-east-1"
 bucket_name     = "my-secure-site-bucket"
 log_bucket_name = "my-secure-site-log-bucket"
 index_file      = "index.html"
+error_file      = "error.html"
 rate_limit      = 2000
+
+# CloudFront settings
+price_class               = "PriceClass_100"
+geo_restriction_type      = "none"
+geo_restriction_locations = []
+
+# Log retention
+log_retention_days = 365
 
 project_tags = {
   Project     = "secure-static-site"
   Environment = "dev"
+  ManagedBy   = "terraform"
 }

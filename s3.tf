@@ -1,6 +1,4 @@
-############################
 # S3 buckets (content & logs)
-############################
 
 # Primary S3 bucket for website content
 resource "aws_s3_bucket" "site" {
@@ -32,15 +30,14 @@ resource "aws_s3_bucket_public_access_block" "site" {
 }
 
 # Server-side encryption using a customer-managed KMS key
-resource "aws_s3_bucket_server_side_encryption_configuration" "site" {
-  bucket = aws_s3_bucket.site.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "log" {
+  bucket = aws_s3_bucket.log.id
   rule {
     apply_server_side_encryption_by_default {
-      # Use AES256 encryption for objects in the site bucket. KMS encryption is not
-      # compatible with anonymous access via CloudFront. See AWS docs: SSE-KMS
-      # objects require authenticated requests and can't be served anonymously【217187299888546†L162-L167】.
-      sse_algorithm = "AES256"
+      kms_master_key_id = aws_kms_key.site_key.arn
+      sse_algorithm     = "aws:kms"
     }
+    bucket_key_enabled = true
   }
 }
 
@@ -70,14 +67,13 @@ resource "aws_s3_bucket_ownership_controls" "log" {
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "log" {
-  bucket = aws_s3_bucket.log.id
-  rule {
-    apply_server_side_encryption_by_default {
-      # Use AES256 encryption on the log bucket to avoid KMS permissions issues
-      sse_algorithm = "AES256"
-    }
-  }
+resource "aws_s3_object" "error" {
+  bucket       = aws_s3_bucket.site.id
+  key          = "error.html"
+  source       = var.error_file
+  content_type = "text/html"
+  etag         = filemd5(var.error_file)
+  depends_on   = [aws_s3_bucket_policy.site]
 }
 
 resource "aws_s3_bucket_versioning" "log" {
@@ -145,4 +141,41 @@ resource "aws_s3_object" "index" {
   content_type = "text/html"
   etag         = filemd5(var.index_file)
   depends_on   = [aws_s3_bucket_policy.site]
+}
+
+# Lifecycle rules for log bucket - expire old logs to control costs
+resource "aws_s3_bucket_lifecycle_configuration" "log" {
+  bucket = aws_s3_bucket.log.id
+
+  rule {
+    id     = "expire-old-logs"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "GLACIER"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
